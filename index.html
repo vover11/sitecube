@@ -63,7 +63,9 @@
         renderer,
         controls,
         textureLoader,
-        GLLoader
+        GLLoader,
+        noiseMaterial,
+        noiseTime = 0
 
     init();
 
@@ -75,6 +77,9 @@
         container3d.appendChild(renderer.domElement);
 
         scene = new THREE.Scene();
+
+        // Добавляем фон с шумом
+        createNoiseBackground();
 
         camera = new THREE.PerspectiveCamera(50, window.innerWidth/window.innerHeight, .5, 200);
         camera.lookAt(scene.position);
@@ -92,12 +97,10 @@
         GLLoader = new GLTFLoader();
 
         // light
-
         let ambient = new THREE.AmbientLight(0xffffff, 2)
         scene.add(ambient)
 
         // mesh
-
         let modelsPaths = [
             'https://raw.githubusercontent.com/vover11/newcube/main/cube.gltf',
             'models/cube.glb',
@@ -105,7 +108,6 @@
         ]
 
         let root = new THREE.Object3D()
-
         let links = []
 
         GLLoader.load(modelsPaths[0], (gltf) => {
@@ -114,16 +116,13 @@
             root.position.set(0,0,0)
 
             root.traverse(function (node) {
-
                 if (node instanceof THREE.Mesh && node.name !== 'root' && node.name !== 'Cube') {
                     links.push(node)
                 }
-
             });
         })
 
         // interactive
-
         const raycaster = new THREE.Raycaster();
         let mouse = new THREE.Vector2();
 
@@ -138,13 +137,10 @@
         raycastSprite()
 
         function raycastSprite() {
-
             let headerHeight = 0;
             var container3d = document.getElementsByClassName('container3d')[0];
             window.onmousemove = (function (e) {
-
                 if (window.innerWidth > 920) {
-
                     e.preventDefault();
                     mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
                     mouse.y = -((e.clientY - headerHeight + pageYOffset) / renderer.domElement.clientHeight) * 2 + 1;
@@ -152,12 +148,9 @@
                     let intersects = raycaster.intersectObjects(links, true);
                     
                     if (intersects.length > 0) {
-                        // Изменено на стандартный курсор-указатель
                         document.body.style.cursor = 'pointer';
                         linkHover = 1
-
                     } else {
-                        // Возвращаем стандартный курсор
                         document.body.style.cursor = 'default';
                         controls.removeEventListener('change', onChangeControl)
                         move = 0
@@ -167,26 +160,22 @@
                 }
             });
 
-            if(window.innerWidth > 920)
-            {
+            if(window.innerWidth > 920) {
                 window.addEventListener('mousedown', pointerDown, false)
                 window.addEventListener('mouseup', openLink, false)
-            }
-            else
-            {
+            } else {
                 container3d.querySelector('canvas').addEventListener('pointerup', openLinkMobile, false)
                 container3d.querySelector('canvas').addEventListener('pointerdown', pointerDown, false)
             }
+            
             var pd = false;
             function pointerDown(){
-            
                 pd = true;
                 setTimeout(function(){
-                
                     pd = false;
                 }, 500);
-            
             }
+            
             function openLinkMobile (e) {
                 e.preventDefault();
                 mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
@@ -200,60 +189,171 @@
                     });
                     let link = intersects[0].object;
                     location.href = linksObject[Number(link.name)]
-                } else {
                 }
             }
 
+            function openLink (e) {
+                e.preventDefault();
+                mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
+                mouse.y = -((e.clientY - headerHeight + pageYOffset) / renderer.domElement.clientHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+                let intersects = raycaster.intersectObjects(links, true);
+                if (intersects.length > 0) {
+                    intersects = intersects.sort(function (a, b) {
+                        return a.distanceToRay - b.distanceToRay;
+                    });
+                    let link = intersects[0].object;
 
-            function  openLink (e) {
+                    linkClick = 1
+                    controls.addEventListener('change', onChangeControl)
 
-                    e.preventDefault();
-                    mouse.x = (e.clientX / renderer.domElement.clientWidth) * 2 - 1;
-                    mouse.y = -((e.clientY - headerHeight + pageYOffset) / renderer.domElement.clientHeight) * 2 + 1;
-                    raycaster.setFromCamera(mouse, camera);
-                    let intersects = raycaster.intersectObjects(links, true);
-                    if (intersects.length > 0) {
-
-                        intersects = intersects.sort(function (a, b) {
-                            return a.distanceToRay - b.distanceToRay;
-                        });
-                        let link = intersects[0].object;
-
-                        linkClick = 1
-                        controls.addEventListener('change', onChangeControl)
-
-                        window.addEventListener('click', () => pd && linkHover && linkClick ? location.href = linksObject[Number(link.name)] : '')
-
-                    } else {
-
-                    }
-
+                    window.addEventListener('click', () => pd && linkHover && linkClick ? location.href = linksObject[Number(link.name)] : '')
+                }
             }
         }
 
         window.addEventListener('resize', onWindowResize)
-
         animate()
     }
 
+    function createNoiseBackground() {
+        // Создаем шейдерный материал для фона с шумом
+        noiseMaterial = new THREE.ShaderMaterial({
+            uniforms: {
+                time: { value: 0 },
+                resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) }
+            },
+            vertexShader: `
+                varying vec2 vUv;
+                void main() {
+                    vUv = uv;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }
+            `,
+            fragmentShader: `
+                uniform float time;
+                uniform vec2 resolution;
+                varying vec2 vUv;
+                
+                // Функция шума (simplex noise)
+                vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+                vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
+                vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+                
+                float snoise(vec3 v) {
+                    const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+                    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+                    
+                    vec3 i = floor(v + dot(v, C.yyy));
+                    vec3 x0 = v - i + dot(i, C.xxx);
+                    
+                    vec3 g = step(x0.yzx, x0.xyz);
+                    vec3 l = 1.0 - g;
+                    vec3 i1 = min(g.xyz, l.zxy);
+                    vec3 i2 = max(g.xyz, l.zxy);
+                    
+                    vec3 x1 = x0 - i1 + C.xxx;
+                    vec3 x2 = x0 - i2 + C.yyy;
+                    vec3 x3 = x0 - D.yyy;
+                    
+                    i = mod289(i);
+                    vec4 p = permute(permute(permute(
+                             i.z + vec4(0.0, i1.z, i2.z, 1.0))
+                           + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+                           + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+                    
+                    float n_ = 0.142857142857;
+                    vec3 ns = n_ * D.wyz - D.xzx;
+                    
+                    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+                    
+                    vec4 x_ = floor(j * ns.z);
+                    vec4 y_ = floor(j - 7.0 * x_);
+                    
+                    vec4 x = x_ *ns.x + ns.yyyy;
+                    vec4 y = y_ *ns.x + ns.yyyy;
+                    vec4 h = 1.0 - abs(x) - abs(y);
+                    
+                    vec4 b0 = vec4(x.xy, y.xy);
+                    vec4 b1 = vec4(x.zw, y.zw);
+                    
+                    vec4 s0 = floor(b0)*2.0 + 1.0;
+                    vec4 s1 = floor(b1)*2.0 + 1.0;
+                    vec4 sh = -step(h, vec4(0.0));
+                    
+                    vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy;
+                    vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww;
+                    
+                    vec3 p0 = vec3(a0.xy, h.x);
+                    vec3 p1 = vec3(a0.zw, h.y);
+                    vec3 p2 = vec3(a1.xy, h.z);
+                    vec3 p3 = vec3(a1.zw, h.w);
+                    
+                    vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2,p2), dot(p3,p3)));
+                    p0 *= norm.x;
+                    p1 *= norm.y;
+                    p2 *= norm.z;
+                    p3 *= norm.w;
+                    
+                    vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+                    m = m * m;
+                    return 42.0 * dot(m*m, vec4(dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3)));
+                }
+                
+                void main() {
+                    vec2 uv = vUv * 2.0 - 1.0;
+                    uv.x *= resolution.x / resolution.y;
+                    
+                    // Анимированный шум
+                    float noise = snoise(vec3(uv * 5.0, time * 0.5));
+                    noise = noise * 0.5 + 0.5; // Приводим к диапазону 0-1
+                    
+                    // Создаем эффект "мерцающих звезд"
+                    float stars = smoothstep(0.95, 1.0, noise);
+                    
+                    // Основной цвет фона - темный
+                    vec3 color = vec3(0.05, 0.05, 0.1);
+                    
+                    // Добавляем шум
+                    color += noise * 0.1;
+                    
+                    // Добавляем звезды
+                    color += stars * vec3(0.8, 0.8, 1.0);
+                    
+                    gl_FragColor = vec4(color, 1.0);
+                }
+            `,
+            depthWrite: false,
+            depthTest: false
+        });
+
+        // Создаем плоскость на весь экран для фона
+        const geometry = new THREE.PlaneGeometry(2, 2);
+        const plane = new THREE.Mesh(geometry, noiseMaterial);
+        scene.add(plane);
+    }
 
     function animate() {
+        noiseTime += 0.01;
+        if (noiseMaterial) {
+            noiseMaterial.uniforms.time.value = noiseTime;
+        }
 
         camera.updateProjectionMatrix();
-
         renderer.render(scene, camera);
-
         controls.update();
         requestAnimationFrame(animate);
     }
 
     function onWindowResize() {
-
         camera.aspect = window.innerWidth/window.innerHeight;
         camera.updateProjectionMatrix();
-
         renderer.setSize(window.innerWidth, window.innerHeight);
-
+        
+        if (noiseMaterial) {
+            noiseMaterial.uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+        }
     }
 
 </script>
